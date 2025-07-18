@@ -4,15 +4,10 @@ import numpy as np
 import plotly.express as px
 import requests
 
-# ------------------------------------------------------------
-# Page config
-# ------------------------------------------------------------
-st.set_page_config(page_title="US Car Export Analyzer", page_icon="🚗", layout="wide")
+st.set_page_config(page_title="US vs EU Car Market Analyzer", page_icon="🚗", layout="wide")
 
 # ------------------------------------------------------------
-# Live USD→EUR FX rate (exchangerate.host)
-# Cached 1h to avoid rate limits
-# ------------------------------------------------------------
+# FX Rate USD→EUR live (cache 1h)
 @st.cache_data(ttl=3600)
 def get_live_usd_to_eur() -> float:
     url = "https://api.exchangerate.host/latest?base=USD&symbols=EUR"
@@ -22,133 +17,179 @@ def get_live_usd_to_eur() -> float:
         data = r.json()
         return float(data["rates"]["EUR"])
     except Exception:
-        # fallback default if API fails
         return 0.92
 
 # ------------------------------------------------------------
-# Data loader (placeholder simulated data)
-# Replace with real API / scraping results
-# ------------------------------------------------------------
+# Simulated US data loader
 @st.cache_data(show_spinner=False)
-def load_data(model_name: str, min_year: int, max_year: int, n: int = 200) -> pd.DataFrame:
+def load_us_data(model_name: str, min_year: int, max_year: int, km_max: int, cond_filter: str, n: int=200) -> pd.DataFrame:
     np.random.seed(42)
+    conds = ["scarse", "buone", "ottime"]
     data = {
-        "Model": [model_name] * n,
-        "Year": np.random.randint(min_year, max_year + 1, n),
-        "Price_USD": np.random.randint(25_000, 90_000, n),
-        "Mileage_miles": np.random.randint(5_000, 120_000, n),
-        "State": np.random.choice(
-            ["CA", "TX", "FL", "NY", "NJ", "IL", "WA", "GA", "AZ", "CO"], n
-        ),
+        "Model": [model_name]*n,
+        "Year": np.random.randint(min_year, max_year+1, n),
+        "Price_USD": np.random.randint(25000, 90000, n),
+        "Mileage_miles": np.random.randint(3000, int(km_max/1.609)+1, n),
+        "Condition": np.random.choice(conds, n, p=[0.2, 0.5, 0.3]),
+        "Region": np.random.choice(["CA","TX","FL","NY","NJ","IL"], n),
     }
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    if cond_filter != "Tutte":
+        df = df[df["Condition"] == cond_filter]
+    return df
+
+# ------------------------------------------------------------
+# Simulated EU data loader
+@st.cache_data(show_spinner=False)
+def load_eu_data(model_name: str, min_year: int, max_year: int, km_max: int, cond_filter: str, n: int=150) -> pd.DataFrame:
+    np.random.seed(123)
+    conds = ["scarse", "buone", "ottime"]
+    data = {
+        "Model": [model_name]*n,
+        "Year": np.random.randint(min_year, max_year+1, n),
+        "Price_EUR": np.random.randint(23000, 85000, n),
+        "Mileage_km": np.random.randint(3000, km_max+1, n),
+        "Condition": np.random.choice(conds, n, p=[0.25, 0.5, 0.25]),
+        "Country": np.random.choice(["DE","FR","IT","ES","NL","BE"], n),
+    }
+    df = pd.DataFrame(data)
+    if cond_filter != "Tutte":
+        df = df[df["Condition"] == cond_filter]
+    return df
 
 # ------------------------------------------------------------
 # Sidebar filters
-# ------------------------------------------------------------
-st.sidebar.header("Filter Options")
-model = st.sidebar.text_input("Car Model (e.g., BMW M3 E92)", "BMW M3 E92")
-min_year = st.sidebar.number_input("Min Year", min_value=1990, max_value=2025, value=2008)
-max_year = st.sidebar.number_input("Max Year", min_value=1990, max_value=2025, value=2013)
-n_rows = st.sidebar.slider("# Listings (simulated)", min_value=50, max_value=1000, value=200, step=50)
+st.sidebar.header("Filtri Auto")
+model = st.sidebar.text_input("Modello auto (es. BMW M3 E92)", "BMW M3 E92")
 
-with st.spinner("Loading data & FX rate..."):
-    df = load_data(model, min_year, max_year, n_rows)
-    fx_rate = get_live_usd_to_eur()
+# Ora permettiamo anno minimo e massimo anche 0 come valore "auto"
+min_year_input = st.sidebar.number_input("Anno minimo (0 = automatico)", min_value=0, max_value=2025, value=0)
+max_year_input = st.sidebar.number_input("Anno massimo (0 = automatico)", min_value=0, max_value=2025, value=0)
 
-# ------------------------------------------------------------
-# Header
-# ------------------------------------------------------------
-st.title("US Car Market Analysis for Export")
-st.caption("Demo with simulated data + live USD→EUR exchange rate (exchangerate.host).")
-
-# FX display + manual override
-col_fx1, col_fx2 = st.columns([1,1])
-with col_fx1:
-    st.info(f"Current USD→EUR rate (live): {fx_rate:.4f}")
-with col_fx2:
-    manual_fx = st.number_input("Override FX? Leave =0 to use live rate", value=0.0, step=0.0001, format="%.4f")
-active_fx = manual_fx if manual_fx > 0 else fx_rate
+km_max = st.sidebar.number_input("Chilometraggio massimo (km)", min_value=5000, max_value=300000, value=100000, step=1000)
+condition = st.sidebar.selectbox("Condizioni", options=["Tutte", "scarse", "buone", "ottime"])
 
 # ------------------------------------------------------------
-# Data preview
-# ------------------------------------------------------------
-st.subheader("Sample Listings")
-st.dataframe(df.head(20), use_container_width=True)
+# Load full datasets (unfiltered anni) per calcolare anni min/max disponibili
+with st.spinner("Calcolo anni disponibili..."):
+    df_us_all = load_us_data(model, 1990, 2025, km_max=300000, cond_filter="Tutte", n=1000)
+    df_eu_all = load_eu_data(model, 1990, 2025, km_max=300000, cond_filter="Tutte", n=1000)
+
+    us_year_min = int(df_us_all["Year"].min())
+    us_year_max = int(df_us_all["Year"].max())
+    eu_year_min = int(df_eu_all["Year"].min())
+    eu_year_max = int(df_eu_all["Year"].max())
+
+# Usa i valori automatici se l’utente ha messo 0
+min_year = min_year_input if min_year_input > 0 else min(us_year_min, eu_year_min)
+max_year = max_year_input if max_year_input > 0 else max(us_year_max, eu_year_max)
 
 # ------------------------------------------------------------
-# Market snapshot
+# Load filtered data
+with st.spinner("Caricamento dati e cambio FX..."):
+    fx_usd_eur = get_live_usd_to_eur()
+    df_us = load_us_data(model, min_year, max_year, km_max, condition)
+    df_eu = load_eu_data(model, min_year, max_year, km_max, condition)
+
+# Convert USD prices to EUR
+df_us["Price_EUR"] = df_us["Price_USD"] * fx_usd_eur
+# Convert mileage miles → km for US data
+df_us["Mileage_km"] = (df_us["Mileage_miles"] * 1.609).round()
+
 # ------------------------------------------------------------
-st.subheader("Market Snapshot")
-col1, col2, col3, col4 = st.columns(4)
+# Title and FX info
+st.title("Analisi mercato auto USA vs Europa")
+st.markdown(f"Cambio USD→EUR live: **{fx_usd_eur:.4f}**")
+
+# ------------------------------------------------------------
+# Show sample data
+st.subheader("Campione auto USA")
+st.dataframe(df_us.head(10))
+st.subheader("Campione auto Europa")
+st.dataframe(df_eu.head(10))
+
+# ------------------------------------------------------------
+# Price stats + comparison
+col1, col2 = st.columns(2)
 with col1:
-    st.metric("Average Price (USD)", f"${df['Price_USD'].mean():,.0f}")
+    st.metric("Prezzo medio USA (USD)", f"${df_us['Price_USD'].mean():,.0f}")
+    st.metric("Prezzo medio USA (EUR)", f"€{df_us['Price_EUR'].mean():,.0f}")
+    st.metric("Chilometraggio medio USA (km)", f"{df_us['Mileage_km'].mean():,.0f} km")
 with col2:
-    st.metric("Median Price (USD)", f"${df['Price_USD'].median():,.0f}")
-with col3:
-    st.metric("Lowest Price (USD)", f"${df['Price_USD'].min():,.0f}")
-with col4:
-    st.metric("Highest Price (USD)", f"${df['Price_USD'].max():,.0f}")
+    st.metric("Prezzo medio EU (EUR)", f"€{df_eu['Price_EUR'].mean():,.0f}")
+    st.metric("Chilometraggio medio EU (km)", f"{df_eu['Mileage_km'].mean():,.0f} km")
 
 # ------------------------------------------------------------
-# Visualizations
-# ------------------------------------------------------------
+# Price distributions
 colA, colB = st.columns(2)
 with colA:
-    fig_hist = px.histogram(df, x="Price_USD", nbins=25, title="Price Distribution (USD)")
-    st.plotly_chart(fig_hist, use_container_width=True)
+    fig_us = px.histogram(df_us, x="Price_EUR", nbins=25, title="Distribuzione prezzi USA (EUR)")
+    st.plotly_chart(fig_us, use_container_width=True)
 with colB:
-    fig_scatter = px.scatter(
-        df, x="Mileage_miles", y="Price_USD", color="Year", title="Price vs Mileage", hover_data=["State"]
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    fig_eu = px.histogram(df_eu, x="Price_EUR", nbins=25, title="Distribuzione prezzi Europa (EUR)")
+    st.plotly_chart(fig_eu, use_container_width=True)
 
 # ------------------------------------------------------------
-# Import Cost & Profit Calculator
-# ------------------------------------------------------------
-st.header("Import Cost & Profit Simulation")
+# Profitability estimation
+st.header("Simulazione di importazione e profitto")
 
-default_purchase = int(df["Price_USD"].mean()) if not df.empty else 40_000
-purchase_price_usd = st.number_input("Purchase Price (USD)", value=default_purchase, step=1000)
-purchase_price_eur = purchase_price_usd * active_fx
+default_purchase_usd = int(df_us["Price_USD"].mean()) if not df_us.empty else 40000
+purchase_price_usd = st.number_input("Prezzo di acquisto (USD)", value=default_purchase_usd, step=1000)
+purchase_price_eur = purchase_price_usd * fx_usd_eur
 
-st.markdown("### Import Cost Assumptions")
+st.markdown("### Costi di importazione stimati (in €)")
 colc1, colc2, colc3 = st.columns(3)
 with colc1:
-    shipping = st.number_input("Shipping (€)", value=2000, step=100)
+    shipping = st.number_input("Spedizione (€)", value=2000, step=100)
 with colc2:
-    duty_pct = st.number_input("Duties (% of value)", value=10.0, step=0.5)
+    duty_pct = st.number_input("Dazi (%)", value=10.0, step=0.5)
 with colc3:
-    vat_pct = st.number_input("VAT (%)", value=22.0, step=0.5)
-
+    vat_pct = st.number_input("IVA (%)", value=22.0, step=0.5)
 colc4, colc5 = st.columns(2)
 with colc4:
-    omolog = st.number_input("Omologazione & Mods (€)", value=2500, step=100)
+    omolog = st.number_input("Omologazione & modifiche (€)", value=2500, step=100)
 with colc5:
-    other_fees = st.number_input("Other Fees (€)", value=1000, step=100)
+    other_fees = st.number_input("Altre spese (€)", value=1000, step=100)
 
 duty = (duty_pct / 100.0) * purchase_price_eur
 vat = (vat_pct / 100.0) * (purchase_price_eur + duty + shipping)
 landed_cost = purchase_price_eur + shipping + duty + vat + omolog + other_fees
 
-st.markdown("### EU Sale Price Scenario")
-sale_price = st.number_input("Expected Sale Price in EU (€)", value=60000, step=1000)
+st.markdown(f"**Costo totale stimato importazione:** €{landed_cost:,.0f}")
+
+sale_price = st.number_input("Prezzo vendita previsto in Europa (€)", value=60000, step=1000)
 profit = sale_price - landed_cost
 
-st.markdown(f"**Estimated Landed Cost:** €{landed_cost:,.0f}")
-st.markdown(f"**Projected Profit:** €{profit:,.0f}")
+st.markdown(f"**Profitto stimato:** €{profit:,.0f}")
 
-if profit > 0:
-    st.success("✅ Potentially profitable")
+# ------------------------------------------------------------
+# Confronto prezzi medi e indicazione profittabilità
+avg_us_eur = df_us["Price_EUR"].mean() if not df_us.empty else 0
+avg_eu = df_eu["Price_EUR"].mean() if not df_eu.empty else 0
+
+st.subheader("Confronto prezzi medi")
+st.write(f"Prezzo medio USA (EUR): €{avg_us_eur:,.0f}")
+st.write(f"Prezzo medio Europa (EUR): €{avg_eu:,.0f}")
+
+if avg_us_eur < avg_eu and profit > 0:
+    st.success("✅ Importazione potenzialmente profittevole!")
+elif avg_us_eur >= avg_eu:
+    st.warning("⚠️ Prezzi USA non inferiori ai prezzi Europa. Importazione meno conveniente.")
 else:
-    st.error("❌ Likely unprofitable")
+    st.error("❌ Profitto negativo con i parametri inseriti.")
 
 # ------------------------------------------------------------
-# Data export
-# ------------------------------------------------------------
+# Export dati
 st.download_button(
-    "Download current dataset (CSV)",
-    data=df.to_csv(index=False).encode("utf-8"),
+    "Scarica dati USA (CSV)",
+    data=df_us.to_csv(index=False).encode("utf-8"),
     file_name="us_car_market_sample.csv",
+    mime="text/csv",
+)
+
+st.download_button(
+    "Scarica dati Europa (CSV)",
+    data=df_eu.to_csv(index=False).encode("utf-8"),
+    file_name="eu_car_market_sample.csv",
     mime="text/csv",
 )
