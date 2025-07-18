@@ -72,8 +72,8 @@ condition = st.sidebar.selectbox("Condizioni", options=["Tutte", "scarse", "buon
 # ------------------------------------------------------------
 # Load full datasets (unfiltered anni) per calcolare anni min/max disponibili
 with st.spinner("Calcolo anni disponibili..."):
-    df_us_all = load_us_data(model, 1990, 2025, km_max=300000, cond_filter="Tutte", n=1000)
-    df_eu_all = load_eu_data(model, 1990, 2025, km_max=300000, cond_filter="Tutte", n=1000)
+df_us_all = load_us_data(model, 1990, 2025, km_max=300000, cond_filter="Tutte", n=200)
+df_eu_all = load_eu_data(model, 1990, 2025, km_max=300000, cond_filter="Tutte", n=200)
 
     us_year_min = int(df_us_all["Year"].min())
     us_year_max = int(df_us_all["Year"].max())
@@ -81,8 +81,8 @@ with st.spinner("Calcolo anni disponibili..."):
     eu_year_max = int(df_eu_all["Year"].max())
 
 # Usa i valori automatici se l’utente ha messo 0
-min_year = min_year_input if min_year_input > 0 else min(us_year_min, eu_year_min)
-max_year = max_year_input if max_year_input > 0 else max(us_year_max, eu_year_max)
+min_year = min_year_input if min_year_input > 1940 else min(us_year_min, eu_year_min)
+max_year = max_year_input if max_year_input > 2025 else max(us_year_max, eu_year_max)
 
 # ------------------------------------------------------------
 # Load filtered data
